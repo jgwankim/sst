@@ -1,0 +1,53 @@
+name: Update data and deploy
+
+on:
+  schedule:
+    # KST 09:00-16:59, Mon-Fri, every 20 minutes (UTC 00:00-07:59)
+    - cron: '*/20 0-7 * * 1-5'
+    # KST 17:30-20:30 after-hours session, hourly
+    - cron: '30 8-11 * * 1-5'
+    # KST 07:15 Tue-Sat, picks up the US close
+    - cron: '15 22 * * 1-5'
+  push:
+    branches: [main]
+    paths-ignore: ['data/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: site
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch market data
+        shell: pwsh
+        run: ./scripts/update.ps1
+      - name: Commit data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "no data change"
+          else
+            git commit -m "data: update"
+            git pull --rebase --autostash origin main
+            git push origin HEAD:main
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="삼전 트래커">
+<meta name="format-detection" content="telephone=no">
+<meta name="theme-color" content="#F4F5F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E1014" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>삼전 트래커</title>
+<style>
+:root{--bg:#F4F5F7;--card:#FFFFFF;--ink:#14171C;--ink2:#4E5663;--line:#E4E7EC;--accent:#1B3A8C;--btn:#FFFFFF;--neg:#B4470C}
+@media (prefers-color-scheme: dark){:root{--bg:#0E1014;--card:#181B21;--ink:#F2F4F7;--ink2:#B3BAC6;--line:#2A2E37;--accent:#9DB8FF;--btn:#0E1014;--neg:#FFA366}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard","Noto Sans KR","Malgun Gothic",sans-serif;font-size:15px;line-height:1.55;word-break:keep-all;padding:20px}
+.box{width:100%;max-width:380px;background:var(--card);border-radius:20px;padding:24px 20px}
+h1{font-size:20px;margin:0 0 4px}
+p{margin:0 0 14px;color:var(--ink2);font-size:14px}
+label{display:block;font-size:13px;font-weight:600;color:var(--ink2);margin-bottom:5px}
+input{width:100%;min-height:50px;border:1.5px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);padding:10px 12px;font:inherit;font-size:17px;outline:none;-webkit-appearance:none;appearance:none}
+input:focus{border-color:var(--accent)}
+button{width:100%;min-height:50px;margin-top:12px;border:0;border-radius:12px;background:var(--accent);color:var(--btn);font:inherit;font-weight:700;font-size:16px;cursor:pointer}
+button[disabled]{opacity:.6}
+.msg{min-height:20px;margin-top:10px;font-size:13px;color:var(--neg)}
+[hidden]{display:none}
+</style>
+</head>
+<body>
+<div class="box" id="box">
+  <h1>삼전 트래커</h1>
+  <p id="lead">여는 중이에요.</p>
+  <form id="form" hidden autocomplete="off">
+    <label for="pw">비밀번호</label>
+    <input id="pw" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" enterkeyhint="go">
+    <button id="go" type="submit">열기</button>
+  </form>
+  <div class="msg" id="msg" role="alert"></div>
+  <button id="retry" type="button" hidden>다시 시도</button>
+</div>
+<script>
+(function(){
+'use strict';
+var KEY = 'sst.key', ENC = 'sst.enc';
+function el(id){ return document.getElementById(id); }
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+function lsDel(k){ try{ localStorage.removeItem(k); }catch(e){} }
+function b64d(s){ var bin = atob(s), u = new Uint8Array(bin.length); for(var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
+function b64e(u){ var s = ''; for(var i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s); }
+function norm(p){ return String(p || '').toLowerCase().replace(/[\s\-]/g, ''); }
+function okEnc(e){ return !!(e && e.v === 1 && e.salt && e.iv && e.ct && e.mac && e.iter > 0); }
+
+
+function fetchEnc(){
+  return fetch('app.enc?t=' + Date.now(), {cache: 'no-store'}).then(function(r){ if(!r.ok) throw new Error('http'); return r.text(); }).then(function(t){
+    var e = JSON.parse(t); if(!okEnc(e)) throw new Error('bad'); lsSet(ENC, t); return e;
+  }).catch(function(err){
+    var c = lsGet(ENC); if(c){ try{ var e = JSON.parse(c); if(okEnc(e)) return e; }catch(x){} }
+    throw err;
+  });
+}
+function derive(pass, enc){
+  return crypto.subtle.importKey('raw', new TextEncoder().encode(norm(pass)), 'PBKDF2', false, ['deriveBits']).then(function(km){
+    return crypto.subtle.deriveBits({name: 'PBKDF2', salt: b64d(enc.salt), iterations: enc.iter, hash: 'SHA-256'}, km, 512);
+  }).then(function(bits){ return new Uint8Array(bits); });
+}
+function unseal(key, enc){
+  var iv = b64d(enc.iv), ct = b64d(enc.ct), mac = b64d(enc.mac), data = new Uint8Array(iv.length + ct.length);
+  data.set(iv, 0); data.set(ct, iv.length);
+  return crypto.subtle.importKey('raw', key.slice(32, 64), {name: 'HMAC', hash: 'SHA-256'}, false, ['verify']).then(function(hk){
+    return crypto.subtle.verify('HMAC', hk, mac, data);
+  }).then(function(ok){
+    if(!ok) return null;
+    return crypto.subtle.importKey('raw', key.slice(0, 32), {name: 'AES-CBC'}, false, ['decrypt']).then(function(ak){
+      return crypto.subtle.decrypt({name: 'AES-CBC', iv: iv}, ak, ct);
+    }).then(function(pt){ return new TextDecoder('utf-8').decode(pt); });
+  });
+}
+function launch(html){ document.open(); document.write(html); document.close(); }
+function showForm(text){ el('lead').textContent = '받은 비밀번호를 입력하면 열려요. 한 번 입력하면 이 기기에서는 다시 묻지 않아요.'; el('form').hidden = false; el('retry').hidden = true; el('msg').textContent = text || ''; }
+function fail(text){ el('lead').textContent = ''; el('form').hidden = true; el('msg').textContent = text; el('retry').hidden = false; }
+
+function start(){
+  el('msg').textContent = ''; el('retry').hidden = true; el('lead').textContent = '여는 중이에요.';
+  if(!(window.crypto && crypto.subtle && window.TextEncoder)){ fail('이 브라우저에서는 열 수 없어요. 사파리나 크롬에서 주소가 https로 시작하는지 확인해 주세요.'); return; }
+  fetchEnc().then(function(enc){
+    var saved = lsGet(KEY), tryKey = Promise.resolve(null);
+    if(saved){ try{ tryKey = unseal(b64d(saved), enc).catch(function(){ return null; }); }catch(e){ tryKey = Promise.resolve(null); } }
+    return tryKey.then(function(html){
+      if(html){ launch(html); return; }
+      if(saved){ lsDel(KEY); showForm('비밀번호가 바뀌었어요. 새 비밀번호를 입력해 주세요.'); } else showForm('');
+      el('form').onsubmit = function(ev){
+        ev.preventDefault();
+        var pw = el('pw').value; if(!norm(pw)){ el('msg').textContent = '비밀번호를 입력해 주세요.'; return; }
+        el('go').disabled = true; el('msg').textContent = '';
+        derive(pw, enc).then(function(key){ return unseal(key, enc).then(function(h){ return {key: key, html: h}; }); }).then(function(r){
+          el('go').disabled = false;
+          if(!r.html){ el('msg').textContent = '비밀번호가 맞지 않아요. 다시 확인해 주세요.'; return; }
+          lsSet(KEY, b64e(r.key)); launch(r.html);
+        }).catch(function(){ el('go').disabled = false; el('msg').textContent = '열지 못했어요. 잠시 후 다시 시도해 주세요.'; });
+      };
+    });
+  }).catch(function(){ fail('앱을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.'); });
+}
+el('retry').onclick = start;
+start();
+})();
+</script>
+</body>
+</html>
