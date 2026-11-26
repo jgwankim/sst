@@ -28,6 +28,13 @@ function Get-Text([string]$url) {
   throw $last
 }
 function Get-Json([string]$url) { return (Get-Text $url) | ConvertFrom-Json }
+# PowerShell 7 turns ISO date strings into DateTime objects when parsing JSON (5.1 does not),
+# which loses the UTC offset. Timestamps are therefore read from the raw text.
+function Get-RawField([string]$text, [string]$name) {
+  $m = [regex]::Match($text, '"' + $name + '"\s*:\s*"([^"]*)"')
+  if ($m.Success) { return $m.Groups[1].Value }
+  return ''
+}
 
 # "171,800" / "+6,534,711" / "45.84%" / "-" -> number or $null
 function To-Num($v) {
@@ -69,7 +76,8 @@ $nowIso = [DateTimeOffset]::UtcNow.ToOffset($kst).ToString('yyyy-MM-ddTHH:mm:ssz
 # ---------------------------------------------------------------- quote (required)
 $quote = $null
 try {
-  $p = (Get-Json 'https://polling.finance.naver.com/api/realtime/domestic/stock/005930').datas[0]
+  $pollText = Get-Text 'https://polling.finance.naver.com/api/realtime/domestic/stock/005930'
+  $p = ($pollText | ConvertFrom-Json).datas[0]
   $price = To-Num $p.closePriceRaw
   if ($null -eq $price) { $price = To-Num $p.closePrice }
   $chg = To-Signed $p.compareToPreviousClosePrice $p.compareToPreviousPrice.name
@@ -83,7 +91,7 @@ try {
     marketCap = To-Num $p.marketValueFullRaw
     marketStatus = [string]$p.marketStatus
     session = [string]$p.marketSessionType
-    tradedAt = [string]$p.localTradedAt
+    tradedAt = (Get-RawField $pollText 'localTradedAt')
     source = 'naver'
   }
 } catch { [void]$errors.Add("quote-naver: $($_.Exception.Message)") }
@@ -149,7 +157,8 @@ try {
 
 # ---------------------------------------------------------------- peers
 function Get-Peer([string]$url, [switch]$Wrapped) {
-  $j = Get-Json $url
+  $peerText = Get-Text $url
+  $j = $peerText | ConvertFrom-Json
   if ($Wrapped) { $j = $j.result }
   $dir = $null
   $cp = Get-Prop $j 'compareToPreviousPrice'
@@ -164,7 +173,7 @@ function Get-Peer([string]$url, [switch]$Wrapped) {
     price = $px
     change = To-Signed $chgRaw $dir
     changePct = To-Signed $j.fluctuationsRatio $dir
-    at = [string]$j.localTradedAt
+    at = (Get-RawField $peerText 'localTradedAt')
   }
 }
 $peers = [ordered]@{}
