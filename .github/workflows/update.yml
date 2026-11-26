@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy2.outputs.page_url || steps.deploy3.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
       - name: Fetch market data
@@ -42,12 +42,33 @@ jobs:
             echo "no data change"
           else
             git commit -m "data: update"
-            git pull --rebase --autostash origin main
-            git push origin HEAD:main
           fi
+          # Always pick up the newest app files; retry because the app publisher may push at the same moment.
+          for i in 1 2 3 4; do
+            if git pull --rebase --autostash origin main && git push origin HEAD:main; then
+              break
+            fi
+            echo "push attempt $i failed; retrying"
+            git rebase --abort 2>/dev/null || true
+            sleep 6
+          done
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
           path: .
+      # The artifact is sometimes not visible to the deploy step right after upload, so wait and retry.
+      - run: sleep 20
       - id: deploy
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - if: steps.deploy.outcome == 'failure'
+        run: sleep 60
+      - id: deploy2
+        if: steps.deploy.outcome == 'failure'
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - if: steps.deploy.outcome == 'failure' && steps.deploy2.outcome == 'failure'
+        run: sleep 120
+      - id: deploy3
+        if: steps.deploy.outcome == 'failure' && steps.deploy2.outcome == 'failure'
         uses: actions/deploy-pages@v5
