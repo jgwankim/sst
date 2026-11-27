@@ -299,7 +299,7 @@ function Get-UsReturns([string]$symbol) {
 function Get-Reaction($usRets, $kr, [double]$thr) {
   # $kr: @{ t = int[]; c = double[] } daily Samsung closes
   $n = 0; $sx = 0.0; $sy = 0.0; $sxx = 0.0; $syy = 0.0; $sxy = 0.0
-  $upN = 0; $upSum = 0.0; $upHit = 0; $dnN = 0; $dnSum = 0.0; $dnHit = 0
+  $upN = 0; $upSum = 0.0; $upHit = 0; $dnN = 0; $dnSum = 0.0; $dnHit = 0; $upAll = 0   # upAll: base rate of up days
   $kt = @($kr.t); $kc = @($kr.c)
   foreach ($u in $usRets) {
     $idx = -1
@@ -309,6 +309,7 @@ function Get-Reaction($usRets, $kr, [double]$thr) {
     $y = ([double]$kc[$idx] / [double]$kc[$idx - 1] - 1) * 100
     $x = [double]$u.r
     $n++; $sx += $x; $sy += $y; $sxx += $x * $x; $syy += $y * $y; $sxy += $x * $y
+    if ($y -gt 0) { $upAll++ }
     if ($x -ge $thr) { $upN++; $upSum += $y; if ($y -gt 0) { $upHit++ } }
     if ($x -le -$thr) { $dnN++; $dnSum += $y; if ($y -lt 0) { $dnHit++ } }
   }
@@ -316,7 +317,7 @@ function Get-Reaction($usRets, $kr, [double]$thr) {
   $den = [Math]::Sqrt(($n * $sxx - $sx * $sx) * ($n * $syy - $sy * $sy))
   $corr = $(if ($den -gt 0) { ($n * $sxy - $sx * $sy) / $den } else { 0 })
   return [ordered]@{
-    n = $n; thr = $thr; corr = [Math]::Round($corr, 2)
+    n = $n; upAll = $upAll; thr = $thr; corr = [Math]::Round($corr, 2)
     upN = $upN; upAvg = $(if ($upN -gt 0) { [Math]::Round($upSum / $upN, 2) } else { $null }); upHit = $upHit
     dnN = $dnN; dnAvg = $(if ($dnN -gt 0) { [Math]::Round($dnSum / $dnN, 2) } else { $null }); dnHit = $dnHit
   }
